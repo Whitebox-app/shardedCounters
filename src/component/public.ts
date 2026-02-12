@@ -1,5 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { paginator } from "convex-helpers/server/pagination";
+import schema from "./schema";
 
 export const DEFAULT_SHARD_COUNT = 16;
 
@@ -114,6 +116,49 @@ export const estimateCount = query({
       }
     }
     return (readCount * shardCount) / readFromShards;
+  },
+});
+
+export const list = query({
+  args: {
+    cursor: v.union(v.string(), v.null()),
+    limit: v.optional(v.number()),
+  },
+  returns: v.object({
+    page: v.array(
+      v.object({
+        _id: v.id("counters"),
+        _creationTime: v.number(),
+        name: v.string(),
+        value: v.number(),
+        shard: v.number(),
+      }),
+    ),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 100;
+    return await paginator(ctx.db, schema)
+      .query("counters")
+      .order("asc")
+      .paginate({ cursor: args.cursor, numItems: limit });
+  },
+});
+
+export const updateNamesBatch = mutation({
+  args: {
+    updates: v.array(
+      v.object({
+        id: v.id("counters"),
+        newName: v.string(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    for (const update of args.updates) {
+      await ctx.db.patch(update.id, { name: update.newName });
+    }
   },
 });
 
