@@ -2,8 +2,8 @@ export declare const DEFAULT_SHARD_COUNT = 16;
 export declare const add: import("convex/server").RegisteredMutation<"public", {
     shard?: number | undefined;
     shards?: number | undefined;
-    count: number;
     name: string;
+    count: number;
 }, Promise<number>>;
 export declare const count: import("convex/server").RegisteredQuery<"public", {
     name: string;
@@ -27,8 +27,8 @@ export declare const list: import("convex/server").RegisteredQuery<"public", {
     _id: import("convex/values").GenericId<"counters">;
     _creationTime: number;
     name: string;
-    shard: number;
     value: number;
+    shard: number;
 }>>>;
 export declare const updateNamesBatch: import("convex/server").RegisteredMutation<"public", {
     updates: {

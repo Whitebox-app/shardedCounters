@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "./schema.js";
-import { test as fcTest, fc } from "@fast-check/vitest";
+import { fc } from "@fast-check/vitest";
 import { api } from "./_generated/api.js";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -47,44 +47,49 @@ describe("counter", () => {
   });
 });
 
-fcTest.prop(
-  {
-    updates: fc.array(
-      fc.record({
-        v: fc.integer({ min: -10000, max: 10000 }).map((i) => i / 100),
-        key: fc.string(),
-        shards: fc.option(fc.integer({ min: 1, max: 100 })),
-      }),
-    ),
-  },
-  { numRuns: 10 },
-)(
+test(
   "updates to counter should match in-memory counter which ignores sharding",
-  async ({ updates }) => {
-    const t = convexTest(schema, modules);
-    const counter = new Map<string, number>();
-    for (const { v, key, shards } of updates) {
-      counter.set(key, (counter.get(key) ?? 0) + v);
-      await t.mutation(api.public.add, {
-        name: key,
-        count: v,
-        shards: shards ?? undefined,
-      });
-      const count = await t.query(api.public.count, { name: key });
-      expect(count).toBeCloseTo(counter.get(key)!);
-    }
-    for (const [key, value] of counter.entries()) {
-      // Rebalancing keeps count the same and makes estimateCount accurate.
-      await t.mutation(api.public.rebalance, { name: key });
-      const count = await t.query(api.public.count, { name: key });
-      expect(count).toBeCloseTo(value);
-      for (let i = 1; i <= 16; i++) {
-        const estimate = await t.query(api.public.estimateCount, {
-          name: key,
-          readFromShards: i,
-        });
-        expect(estimate).toBeCloseTo(value);
-      }
-    }
+  async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.record({
+          updates: fc.array(
+            fc.record({
+              v: fc.integer({ min: -10000, max: 10000 }).map((i) => i / 100),
+              key: fc.string(),
+              shards: fc.option(fc.integer({ min: 1, max: 100 })),
+            }),
+          ),
+        }),
+        async ({ updates }) => {
+          const t = convexTest(schema, modules);
+          const counter = new Map<string, number>();
+          for (const { v, key, shards } of updates) {
+            counter.set(key, (counter.get(key) ?? 0) + v);
+            await t.mutation(api.public.add, {
+              name: key,
+              count: v,
+              shards: shards ?? undefined,
+            });
+            const count = await t.query(api.public.count, { name: key });
+            expect(count).toBeCloseTo(counter.get(key)!);
+          }
+          for (const [key, value] of counter.entries()) {
+            // Rebalancing keeps count the same and makes estimateCount accurate.
+            await t.mutation(api.public.rebalance, { name: key });
+            const count = await t.query(api.public.count, { name: key });
+            expect(count).toBeCloseTo(value);
+            for (let i = 1; i <= 16; i++) {
+              const estimate = await t.query(api.public.estimateCount, {
+                name: key,
+                readFromShards: i,
+              });
+              expect(estimate).toBeCloseTo(value);
+            }
+          }
+        },
+      ),
+      { numRuns: 10 },
+    );
   },
 );

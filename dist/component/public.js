@@ -3,6 +3,26 @@ import { mutation, query } from "./_generated/server";
 import { paginator } from "convex-helpers/server/pagination";
 import schema from "./schema";
 export const DEFAULT_SHARD_COUNT = 16;
+async function getShardCounters(ctx, name, shard) {
+    return await ctx.db
+        .query("counters")
+        .withIndex("name", (q) => q.eq("name", name).eq("shard", shard))
+        .collect();
+}
+async function getMergedShardCounter(ctx, name, shard) {
+    const counters = await getShardCounters(ctx, name, shard);
+    if (counters.length <= 1) {
+        return counters[0] ?? null;
+    }
+    const [primary, ...duplicates] = counters;
+    const mergedValue = counters.reduce((sum, counter) => sum + counter.value, 0);
+    await ctx.db.patch(primary._id, { value: mergedValue });
+    await Promise.all(duplicates.map((counter) => ctx.db.delete(counter._id)));
+    return { ...primary, value: mergedValue };
+}
+function sumShardCounters(counters) {
+    return counters.reduce((sum, counter) => sum + counter.value, 0);
+}
 export const add = mutation({
     args: {
         name: v.string(),
@@ -14,10 +34,7 @@ export const add = mutation({
     handler: async (ctx, args) => {
         const shard = args.shard ??
             Math.floor(Math.random() * (args.shards ?? DEFAULT_SHARD_COUNT));
-        const counter = await ctx.db
-            .query("counters")
-            .withIndex("name", (q) => q.eq("name", args.name).eq("shard", shard))
-            .unique();
+        const counter = await getMergedShardCounter(ctx, args.name, shard);
         if (counter) {
             await ctx.db.patch(counter._id, {
                 value: counter.value + args.count,
@@ -95,13 +112,7 @@ export const estimateCount = query({
         const shards = shuffle(Array.from({ length: shardCount }, (_, i) => i)).slice(0, readFromShards);
         let readCount = 0;
         for (const shard of shards) {
-            const counter = await ctx.db
-                .query("counters")
-                .withIndex("name", (q) => q.eq("name", args.name).eq("shard", shard))
-                .unique();
-            if (counter) {
-                readCount += counter.value;
-            }
+            readCount += sumShardCounters(await getShardCounters(ctx, args.name, shard));
         }
         return (readCount * shardCount) / readFromShards;
     },
